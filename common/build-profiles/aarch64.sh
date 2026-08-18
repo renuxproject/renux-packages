@@ -1,0 +1,8 @@
+# Native build profile for Renux (FreeBSD) aarch64.
+
+RENUXPKG_TARGET_CFLAGS="-march=armv8-a+crc"
+RENUXPKG_TARGET_CXXFLAGS="$RENUXPKG_TARGET_CFLAGS"
+RENUXPKG_TARGET_FFLAGS="$RENUXPKG_TARGET_CFLAGS"
+RENUXPKG_TRIPLET="aarch64-unknown-freebsd"
+RENUXPKG_ZIG_TARGET="aarch64-freebsd"
+RENUXPKG_ZIG_CPU="baseline"

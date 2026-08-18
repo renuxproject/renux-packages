@@ -1,0 +1,1099 @@
+#!/bin/bash
+# vim: set ts=4 sw=4 et:
+
+print_cross_targets() {
+    local f
+    for f in "${RENUXPKG_DISTDIR}"/common/cross-profiles/*.sh; do
+        f=${f%.sh}; f=${f##*/}; printf "\t$f\n"
+    done
+}
+
+usage() {
+    # copied from main logic because this is run before RENUXPKG_DISTDIR is set normally
+    local _distdir="$(readlink -f "${0%/*}")"
+    if [ "${_distdir}" = "." ]; then
+        readonly RENUXPKG_DISTDIR="$(pwd -P)"
+    else
+        readonly RENUXPKG_DISTDIR="${_distdir}"
+    fi
+    cat << _EOF
+$PROGNAME: [options] <target> [arguments]
+
+Targets: (only one may be specified)
+
+binary-bootstrap
+    Install bootstrap packages from host repositories into <masterdir>.
+    If the optional '-A <arch>' flag is set, it will install bootstrap packages
+    from this architecture, and its required renuxpkg utilities. The <masterdir> will
+    be initialized for chroot operations.
+
+bootstrap
+    Build and install from source the bootstrap packages into <masterdir>.
+    If the optional '-A <arch>' flag is set, it will build and install bootstrap
+    packages from this architecture, and its required renuxpkg utilities. The <masterdir>
+    will be initialized for chroot operations.
+
+bootstrap-update
+    Updates bootstrap packages with latest versions available from registered
+    repositories in the rpkg configuration file.
+
+consistency-check
+    Runs a consistency check on all packages
+
+chroot
+    Enter to the chroot in <masterdir>.
+
+clean-repocache
+    Removes obsolete packages from <hostdir>/repocache.
+
+fetch <pkgname>
+    Download package source distribution file(s).
+
+extract <pkgname>
+    Extract package source distribution file(s) into the build directory.
+    By default set to <masterdir>/builddir.
+
+patch <pkgname>
+    Patch the package sources and perform other operations required to
+    prepare a package for configuring and building
+
+configure <pkgname>
+    Configure a package (fetch + extract + patch + configure).
+
+build <pkgname>
+    Build package source (fetch + extract + patch + configure + build).
+
+check <pkgname>
+    Run the package check(s) after building the package source.
+
+install <pkgname>
+    Install target package into <destdir> but not building the binary package
+    and not removing build directory for inspection purposes.
+
+pkg <pkgname>
+    Build binary package for <pkgname> and all required dependencies.
+
+clean [pkgname]
+    Removes auto dependencies, cleans up <masterdir>/builddir and <masterdir>/destdir.
+    If <pkgname> argument is specified, package files from <masterdir>/destdir and its
+    build directory in <masterdir>/buiddir are removed.
+
+list
+    Lists installed packages in <masterdir>.
+
+remove <pkgname>
+    Remove target package from <destdir>. If <pkgname>-<version> is not matched
+    from build template nothing is removed.
+
+remove-autodeps
+    Removes all package dependencies that were installed automatically.
+
+purge-distfiles
+    Removes all obsolete distfiles in <hostdir>/sources.
+
+show <pkgname>
+    Show information for the specified package.
+
+show-avail <pkgname>
+    Returns 0 if package can be built for the given architecture,
+    any other error otherwise.
+
+show-build-deps <pkgname>
+    Show required build dependencies for <pkgname>.
+
+show-check-deps <pkgname>
+    Show required check dependencies for <pkgname>.
+
+show-deps <pkgname>
+    Show required run-time dependencies for <pkgname>. Package must be
+    installed into destdir.
+
+show-files <pkgname>
+    Show files installed by <pkgname>. Package must be installed into destdir.
+
+show-hostmakedepends <pkgname>
+    Show required host build dependencies for <pkgname>.
+
+show-makedepends <pkgname>
+    Show required target build dependencies for <pkgname>.
+
+show-options <pkgname>
+    Show available build options by <pkgname>.
+
+show-shlib-provides <pkgname>
+    Show list of provided shlibs for <pkgname>. Package must be installed into destdir.
+
+show-shlib-requires <pkgname>
+    Show list of required shlibs for <pkgname>. Package must be installed into destdir.
+
+show-var <var>
+    Prints the value of <var> if it's defined in rpkg-src.
+
+show-repo-updates
+    Prints the list of outdated packages in rpkg repositories.
+
+show-sys-updates
+    Prints the list of outdated packages in your system.
+
+show-local-updates
+    Prints the list of outdated packages in your local repositories.
+
+sort-dependencies <pkg> <pkgN+1> ...
+    Given a list of packages specified as additional arguments, a sorted dependency
+    list will be returned to stdout.
+
+update-bulk
+    Rebuilds all packages in the system repositories that are outdated.
+
+update-sys
+    Rebuilds all packages in your system that are outdated and updates them.
+
+update-local
+    Rebuilds all packages in your local repositories that are outdated.
+
+update-check <pkgname>
+    Check upstream site of <pkgname> for new releases.
+
+update-hash-cache
+    Update the hash cache with existing source distfiles.
+
+zap
+    Removes a masterdir but preserving ccache, distcc and host directories.
+
+Options:
+
+-1  If dependencies of target package are missing, fail instead of building them.
+
+-A <host>
+    Use this host machine. Automatically creates masterdir-<host> if it doesn't
+    already exist. Some host machines may require qemu-user and
+    binfmt-support if not natively supported by the processor. Supported hosts:
+
+$(print_cross_targets)
+
+-a  <target>
+    Cross compile packages for this target machine. Supported targets:
+
+$(print_cross_targets)
+
+-b  Build packages even if marked as broken, nocross, or excluded with archs.
+
+-c  <configuration>
+    If specified, etc/conf.<configuration> will be used as the primary config
+    file name; etc/conf will only be attempted if that does not exist.
+
+-C  Do not remove build directory, automatic dependencies and
+    package destdir after successful install.
+
+-E  If a binary package exists in a repository for the target package,
+    do not try to build it, exit immediately.
+
+-e  If a binary package exists in a local repository for the target package,
+    do not try to build it, exit immediately.
+
+-f  Force running the specified stage (configure/build/install/pkg)
+    even if it ran successfully.
+
+-G  Enable RENUXPKG_USE_GIT_REVS (see etc/defaults.conf for more information).
+
+-g  Enable building -dbg packages with debugging symbols.
+
+-H  <hostdir>
+    Absolute path to a directory to be bind mounted at <masterdir>/host.
+    The host directory stores binary packages, sources and package dependencies
+    downloaded from remote repositories.
+    If unset defaults to renux-packages/hostdir.
+
+-h  Usage output.
+
+-I  Ignore required dependencies, useful for extracting/fetching sources.
+
+-i  Make rpkg-src internal errors non-fatal.
+
+-j  Number of parallel build jobs to use when building packages.
+
+-L  Disable ASCII colors.
+
+-m  <masterdir>
+    Absolute path to a directory to be used as masterdir.
+    The masterdir is the main directory to build/store/compile packages.
+    If unset defaults to renux-packages/masterdir-<host>.
+
+-N  Disable use of remote repositories to resolve dependencies.
+
+-n  Disable syncing of remote repositories.
+
+-o  <opt,~opt2,...>
+    Enable or disable (prefixed with ~) package build options. If 'etc/conf'
+    already specifies some, it is merged. Keep in mind that these options
+    apply to all packages within the build, as in if a dependency needs to
+    be built, it will inherit these options.
+
+    Supported options can be shown with the 'show-options' target.
+
+-p  <variable,variable2,...>
+    For show target, show specified variables in addition to default ones.
+    Variable is split and each word is printed in separate line by default.
+    In order to print the whole value in one line, append asterisk to variable name.
+
+-Q  Enable running the check stage, for the target package only.
+
+-K  Enable running the check stage with longer tests.
+    Unlike -Q, this will also run the check stage on built dependencies.
+
+-q  Suppress informational output of rpkg-src (build output is still printed).
+
+-r  <repo>
+    Use an alternative local repository to store generated binary packages.
+    If unset defaults to <hostdir>/binpkgs. If set the binpkgs will
+    be stored into <hostdir>/binpkgs/<repo>.
+    This alternative repository will also be used to resolve dependencies
+    with highest priority order than others.
+
+-s  Make some warnings into errors.
+
+-t  Create a temporary masterdir to not pollute the current one. Note that
+    the existing masterdir must be fully populated with binary-bootstrap first.
+    Once the target has finished, this temporary masterdir will be removed.
+    This flag requires rpkg-uchroot(1), and won't work on filesystems that don't
+    support overlayfs.
+
+-v  Show verbose messages.
+
+-V  Print version of renuxpkg, then exit.
+
+_EOF
+}
+
+check_reqhost_utils() {
+    local broken
+
+    [ "$IN_CHROOT" ] && return 0
+
+    for f in ${REQHOST_UTILS}; do
+        if ! command -v ${f} &>/dev/null; then
+            echo "${f} is missing in your system, can't continue!" 1>&2
+            broken=1
+        fi
+    done
+    [ "$broken" ] && exit 1
+    [ -z "$1" ] && return 0
+
+    for f in ${REQHOST_UTILS_BOOTSTRAP}; do
+        if ! command -v ${f} &>/dev/null; then
+            echo "${f} is missing in your system, can't continue!" 1>&2
+            broken=1
+        fi
+    done
+    [ "$broken" ] && exit 1
+}
+
+check_build_requirements() {
+    local found
+
+    case "$RENUXPKG_TARGET" in
+        *bootstrap*) found=1;;
+        *) ;;
+    esac
+    if [ -z "$found" ]; then
+        rpkg-uhelper cmpver "$RENUXPKG_VERSION" "$RENUXPKG_VERSION_REQ"
+        if [ $? -eq 255 ]; then
+            echo "ERROR: requires renuxpkg>=${RENUXPKG_VERSION_REQ}" 1>&2
+            echo "Bootstrap packages must be updated with 'rpkg-src bootstrap-update'" 1>&2
+            exit 1
+        fi
+    fi
+}
+
+chroot_check() {
+    if [ -f $RENUXPKG_MASTERDIR/.rpkg_chroot_init -o "$RENUXPKG_CHROOT_CMD" = "ethereal" ]; then
+        export CHROOT_READY=1
+    fi
+}
+
+check_native_arch() {
+    if [ "$CHROOT_READY" ]; then
+        if [ -s $RENUXPKG_MASTERDIR/.rpkg_chroot_init ]; then
+            export RENUXPKG_ARCH=$(<$RENUXPKG_MASTERDIR/.rpkg_chroot_init)
+        else
+            export RENUXPKG_ARCH=$(rpkg-uhelper arch)
+        fi
+    else
+        export RENUXPKG_ARCH="$RENUXPKG_MACHINE"
+    fi
+}
+
+masterdir_zap() {
+    rm -rf "$RENUXPKG_MASTERDIR"
+    mkdir -p "$RENUXPKG_MASTERDIR"
+    msg_normal "rpkg-src: $RENUXPKG_MASTERDIR masterdir cleaned up.\n"
+}
+
+exit_func() {
+    wait
+    if [ "$sourcepkg" ]; then
+        remove_pkg $RENUXPKG_CROSS_BUILD
+    fi
+    if [ -z "$IN_CHROOT" ]; then
+        msg_red "rpkg-src: a failure has occurred! exiting...\n"
+    fi
+    exit 2
+}
+
+read_pkg() {
+    if [ -z "${RENUXPKG_TARGET_PKG}" ]; then
+        [ ! -r ./template ] && msg_error "rpkg-src: missing build template in $(pwd).\n"
+        RENUXPKG_TARGET_PKG=${PWD##*/}
+    fi
+    setup_pkg "$RENUXPKG_TARGET_PKG" "$RENUXPKG_CROSS_BUILD" "$1"
+}
+
+setup_distfiles_mirror() {
+    local mirror_list="$1"
+    local mirror scheme path
+
+    # Scheme file:// mirror locations only work with uchroot
+    for mirror in $mirror_list; do
+        scheme="file"
+        if [[ "$mirror" == *://* ]]; then
+            scheme="${mirror%%://*}"
+            path="${mirror#${scheme}://}"
+        else
+            path="$mirror"
+        fi
+        [ "$scheme" != "file" ] && continue
+        if [ "$RENUXPKG_CHROOT_CMD" == "uchroot" ]; then
+            if [ ! -d "$path" ]; then
+                msg_warn "rpkg-src: Invalid path in RENUXPKG_DISTFILES_MIRROR ($mirror)\n"
+                continue
+            fi
+            mkdir -p "$RENUXPKG_MASTERDIR/$path"
+            RENUXPKG_CHROOT_CMD_ARGS+=" -b $path:$path"
+        else
+            case "$RENUXPKG_TARGET" in
+                fetch|extract|patch|configure|build|check|install|pkg|bootstrap|bootstrap-update|update-sys)
+                    msg_warn "rpkg-src: File URLs ($mirror) don't work with '$RENUXPKG_CHROOT_CMD'\n"
+            esac
+        fi
+    done
+}
+
+#
+# main()
+#
+readonly PROGNAME="${0##*/}"
+readonly RENUXPKG_VERSION_REQ="0.60"
+RENUXPKG_VERSION=$(rpkg-uhelper -V)
+RENUXPKG_VERSION=${RENUXPKG_VERSION%%API*}
+RENUXPKG_VERSION=${RENUXPKG_VERSION##*:}
+readonly RENUXPKG_SRC_VERSION="113"
+
+RENUXPKG_OPTIONS=
+RENUXPKG_OPTSTRING="1A:a:bc:CEefgGhH:iIj:Lm:Nno:p:qsQKr:tvV"
+
+# Preprocess arguments in order to allow options before and after RENUXPKG_TARGET.
+eval set -- $(getopt "$RENUXPKG_OPTSTRING" "$@");
+
+# Options are saved as RENUXPKG_ARG_FOO instead of RENUXPKG_FOO for now; this is
+# because configuration files may override those and we want arguments to
+# take precedence over configuration files
+while getopts "$RENUXPKG_OPTSTRING" opt; do
+    case $opt in
+        1) RENUXPKG_ARG_BUILD_ONLY_ONE_PKG=yes; RENUXPKG_OPTIONS+=" -1";;
+        A) RENUXPKG_ARG_MACHINE="$OPTARG"; RENUXPKG_OPTIONS+=" -A $OPTARG";;
+        a) RENUXPKG_ARG_CROSS_BUILD="$OPTARG"; RENUXPKG_OPTIONS+=" -a $OPTARG";;
+        b) RENUXPKG_ARG_IGNORE_BROKENNESS=yes; RENUXPKG_OPTIONS+=" -b";;
+        c) RENUXPKG_ARG_CONFIG="$OPTARG"; RENUXPKG_OPTIONS+=" -c $OPTARG";;
+        C) RENUXPKG_ARG_KEEP_ALL=1; RENUXPKG_OPTIONS+=" -C";;
+        E) RENUXPKG_ARG_BINPKG_EXISTS=1; RENUXPKG_OPTIONS+=" -E";;
+        e) RENUXPKG_ARG_BINPKG_EXISTS_LOCAL=1; RENUXPKG_OPTIONS+=" -e";;
+        f) RENUXPKG_ARG_BUILD_FORCEMODE=1; RENUXPKG_OPTIONS+=" -f";;
+        G) RENUXPKG_ARG_USE_GIT_REVS=1; RENUXPKG_OPTIONS+=" -G";;
+        g) RENUXPKG_ARG_DEBUG_PKGS=1; RENUXPKG_OPTIONS+=" -g";;
+        H) RENUXPKG_ARG_HOSTDIR="$OPTARG"; RENUXPKG_OPTIONS+=" -H $OPTARG";;
+        h) usage && exit 0;;
+        i) RENUXPKG_ARG_INFORMATIVE_RUN=1; RENUXPKG_OPTIONS+=" -i";;
+        I) RENUXPKG_ARG_SKIP_DEPS=1; RENUXPKG_SKIP_REMOTEREPOS=1; RENUXPKG_OPTIONS+=" -I -N";;
+        j) RENUXPKG_ARG_MAKEJOBS="$OPTARG"; RENUXPKG_OPTIONS+=" -j $OPTARG";;
+        L) export NOCOLORS=1; RENUXPKG_OPTIONS+=" -L";;
+        m) RENUXPKG_ARG_MASTERDIR="$OPTARG"; RENUXPKG_OPTIONS+=" -m $OPTARG";;
+        N) RENUXPKG_ARG_SKIP_REMOTEREPOS=1; RENUXPKG_OPTIONS+=" -N";;
+        n) RENUXPKG_ARG_SKIP_SYNC=1; RENUXPKG_OPTIONS+=" -n";;
+        o) RENUXPKG_ARG_PKG_OPTIONS="$OPTARG"; RENUXPKG_OPTIONS+=" -o $OPTARG";;
+        p) RENUXPKG_ARG_PRINT_VARIABLES="$OPTARG"; RENUXPKG_OPTIONS+=" -p $OPTARG";;
+        q) RENUXPKG_ARG_QUIET=1; RENUXPKG_OPTIONS+=" -q";;
+        Q) RENUXPKG_ARG_CHECK_PKGS=yes; RENUXPKG_OPTIONS+=" -Q";;
+        K) RENUXPKG_ARG_CHECK_PKGS=full; RENUXPKG_OPTIONS+=" -K";;
+        r) RENUXPKG_ARG_ALT_REPOSITORY="$OPTARG"; RENUXPKG_OPTIONS+=" -r $OPTARG";;
+        s) RENUXPKG_ARG_STRICT=yes; RENUXPKG_OPTIONS+=" -s";;
+        t) RENUXPKG_ARG_TEMP_MASTERDIR=1; RENUXPKG_OPTIONS+=" -t -C";;
+        v) RENUXPKG_ARG_VERBOSE=1; RENUXPKG_OPTIONS+=" -v";;
+        V) echo "rpkg-src-$RENUXPKG_SRC_VERSION $(rpkg-uhelper -V)" && exit 0;;
+        --) shift; break;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+[ $# -eq 0 ] && usage && exit 1
+
+# Check if stdout is a tty; if false disable colors.
+test -t 1 || export NOCOLORS=1
+# http://no-color.org
+if [ "${NO_COLOR+x}" ]; then
+    export NOCOLORS=1
+fi
+
+# sane umask
+umask 022
+
+#
+# Check for required utilities in host system.
+#
+# Required utilities in host system for the bootstrap target.
+readonly REQHOST_UTILS_BOOTSTRAP="file objdump find make gawk bash sed gcc g++ gnat \
+    perl bsdtar gzip patch flock pkg-config"
+
+# Required utilities in host.
+readonly REQHOST_UTILS="rpkg-install rpkg-query rpkg-rindex rpkg-uhelper \
+    rpkg-reconfigure rpkg-remove rpkg-create rpkg-uchroot rpkg-uunshare"
+
+check_reqhost_utils
+
+#
+# Set RENUXPKG_CONFIG_FILE, RENUXPKG_DISTDIR, RENUXPKG_MASTERDIR
+# and RENUXPKG_HOSTDIR.
+#
+if [ "$IN_CHROOT" ]; then
+    readonly RENUXPKG_CONFIG_FILE=/usr/local/etc/renuxpkg.d/rpkg-src.conf
+    readonly RENUXPKG_DISTDIR=/renux-packages
+    readonly RENUXPKG_MASTERDIR=/
+    readonly RENUXPKG_HOSTDIR=/host
+else
+    _distdir="$(readlink -f ${0%/*})"
+    if [ "${_distdir}" = "." ]; then
+        readonly RENUXPKG_DISTDIR="$(pwd -P)"
+    else
+        readonly RENUXPKG_DISTDIR="${_distdir}"
+    fi
+    # Read defaults and then the local configuration file
+    if [ -f $RENUXPKG_DISTDIR/etc/defaults.conf ]; then
+        . $RENUXPKG_DISTDIR/etc/defaults.conf
+    fi
+    if [ -n "$RENUXPKG_ARG_CONFIG" -a -s $RENUXPKG_DISTDIR/etc/conf.$RENUXPKG_ARG_CONFIG ]; then
+        # If specified, read custom user configuration...
+        readonly RENUXPKG_CONFIG_FILE=$RENUXPKG_DISTDIR/etc/conf.$RENUXPKG_ARG_CONFIG
+    elif [ -s $RENUXPKG_DISTDIR/etc/conf ]; then
+        # ... otherwise read generic user configuration...
+        readonly RENUXPKG_CONFIG_FILE=$RENUXPKG_DISTDIR/etc/conf
+    elif [ -s ${XDG_CONFIG_HOME:-$HOME/.config}/rpkg-src.conf ]; then
+        readonly RENUXPKG_CONFIG_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/rpkg-src.conf
+    elif [ -s $HOME/.rpkg-src.conf ]; then
+        # ... fallback to ~/.rpkg-src.conf otherwise.
+        readonly RENUXPKG_CONFIG_FILE=$HOME/.rpkg-src.conf
+    fi
+fi
+# Read settings from config file
+[ -s "$RENUXPKG_CONFIG_FILE" ] && . $RENUXPKG_CONFIG_FILE &>/dev/null
+
+# show colors unconditionally in CI
+[ "$RENUXPKG_BUILD_ENVIRONMENT" = renux-packages-ci ] && export NOCOLORS=
+
+# Set options passed on command line, after configuration files have been read
+[ -n "$RENUXPKG_ARG_BUILD_ONLY_ONE_PKG" ] && RENUXPKG_BUILD_ONLY_ONE_PKG=yes
+[ -n "$RENUXPKG_ARG_IGNORE_BROKENNESS" ] && RENUXPKG_IGNORE_BROKENNESS=1
+[ -n "$RENUXPKG_ARG_SKIP_REMOTEREPOS" ] && RENUXPKG_SKIP_REMOTEREPOS=1
+[ -n "$RENUXPKG_ARG_SKIP_SYNC" ] && RENUXPKG_SKIP_SYNC=1
+[ -n "$RENUXPKG_ARG_BUILD_FORCEMODE" ] && RENUXPKG_BUILD_FORCEMODE=1
+[ -n "$RENUXPKG_ARG_INFORMATIVE_RUN" ] && RENUXPKG_INFORMATIVE_RUN=1
+[ -n "$RENUXPKG_ARG_TEMP_MASTERDIR" ] && RENUXPKG_TEMP_MASTERDIR=1
+[ -n "$RENUXPKG_ARG_BINPKG_EXISTS" ] && RENUXPKG_BINPKG_EXISTS=1
+[ -n "$RENUXPKG_ARG_BINPKG_EXISTS_LOCAL" ] && RENUXPKG_BINPKG_EXISTS_LOCAL=1
+[ -n "$RENUXPKG_ARG_USE_GIT_REVS" ] && RENUXPKG_USE_GIT_REVS=1
+[ -n "$RENUXPKG_ARG_DEBUG_PKGS" ] && RENUXPKG_DEBUG_PKGS=1
+[ -n "$RENUXPKG_ARG_SKIP_DEPS" ] && RENUXPKG_SKIP_DEPS=1
+[ -n "$RENUXPKG_ARG_KEEP_ALL" ] && RENUXPKG_KEEP_ALL=1
+[ -n "$RENUXPKG_ARG_QUIET" ] && RENUXPKG_QUIET=1
+[ -n "$RENUXPKG_ARG_PRINT_VARIABLES" ] && RENUXPKG_PRINT_VARIABLES="$RENUXPKG_ARG_PRINT_VARIABLES"
+[ -n "$RENUXPKG_ARG_ALT_REPOSITORY" ] && RENUXPKG_ALT_REPOSITORY="$RENUXPKG_ARG_ALT_REPOSITORY"
+[ -n "$RENUXPKG_ARG_STRICT" ] && RENUXPKG_STRICT="$RENUXPKG_ARG_STRICT"
+[ -n "$RENUXPKG_ARG_MACHINE" ] && RENUXPKG_MACHINE="$RENUXPKG_ARG_MACHINE"
+[ -n "$RENUXPKG_ARG_CROSS_BUILD" ] && RENUXPKG_CROSS_BUILD="$RENUXPKG_ARG_CROSS_BUILD"
+[ -n "$RENUXPKG_ARG_CHECK_PKGS" ] && RENUXPKG_CHECK_PKGS="$RENUXPKG_ARG_CHECK_PKGS"
+[ -n "$RENUXPKG_ARG_MAKEJOBS" ] && RENUXPKG_MAKEJOBS="$RENUXPKG_ARG_MAKEJOBS"
+[ -n "$RENUXPKG_ARG_VERBOSE" ] && RENUXPKG_VERBOSE="$RENUXPKG_ARG_VERBOSE"
+
+# Default to nproc for RENUXPKG_MAKEJOBS if not set and nproc is available
+if command -v nproc >/dev/null ; then
+    : ${RENUXPKG_MAKEJOBS:=$(nproc)}
+else
+    : ${RENUXPKG_MAKEJOBS:=1}
+fi
+
+if [ -z "$RENUXPKG_MACHINE" ]; then
+    RENUXPKG_MACHINE=$(rpkg-uhelper -C /dev/null arch)
+    # default to the same libc when -a is given but not -A
+    if [ -n "$RENUXPKG_CROSS_BUILD" ]; then
+        if [ -z "${RENUXPKG_CROSS_BUILD##*-musl}" ]; then
+            RENUXPKG_MACHINE="${RENUXPKG_MACHINE%-musl}-musl"
+        else
+            RENUXPKG_MACHINE="${RENUXPKG_MACHINE%-musl}"
+        fi
+    fi
+fi
+
+export RENUXPKG_BUILD_ONLY_ONE_PKG RENUXPKG_SKIP_REMOTEREPOS RENUXPKG_BUILD_FORCEMODE \
+       RENUXPKG_INFORMATIVE_RUN RENUXPKG_TEMP_MASTERDIR RENUXPKG_BINPKG_EXISTS RENUXPKG_BINPKG_EXISTS_LOCAL \
+       RENUXPKG_USE_GIT_REVS RENUXPKG_CHECK_PKGS RENUXPKG_DEBUG_PKGS RENUXPKG_SKIP_DEPS \
+       RENUXPKG_KEEP_ALL RENUXPKG_QUIET RENUXPKG_ALT_REPOSITORY RENUXPKG_STRICT RENUXPKG_CROSS_BUILD \
+       RENUXPKG_MAKEJOBS RENUXPKG_PRINT_VARIABLES RENUXPKG_IGNORE_BROKENNESS RENUXPKG_MACHINE \
+       RENUXPKG_VERBOSE
+
+# The masterdir/hostdir variables are forced and readonly in chroot
+if [ -z "$IN_CHROOT" ]; then
+    [ -n "$RENUXPKG_ARG_MASTERDIR" ] && RENUXPKG_MASTERDIR="$RENUXPKG_ARG_MASTERDIR"
+    [ -n "$RENUXPKG_ARG_HOSTDIR" ] && RENUXPKG_HOSTDIR="$RENUXPKG_ARG_HOSTDIR"
+
+    # Sanitize masterdir/hostdir once set for real (resolve links)
+    export RENUXPKG_MASTERDIR="$(readlink -f $RENUXPKG_MASTERDIR 2>/dev/null)"
+    export RENUXPKG_HOSTDIR="$(readlink -f $RENUXPKG_HOSTDIR 2>/dev/null)"
+fi
+
+# Forbid root unless RENUXPKG_ALLOW_CHROOT_BREAKOUT is set
+# (for CI).
+if [ -z "$IN_CHROOT" -a "$UID" -eq 0 -a -z "$RENUXPKG_ALLOW_CHROOT_BREAKOUT" ]; then
+    echo "ERROR: rpkg-src cannot be used as root." 1>&2
+    exit 1
+fi
+
+# if RENUXPKG_MASTERDIR unset, defaults to $RENUXPKG_DISTDIR/masterdir-<host machine>
+# unless in a container for simplicity of container/CI usage
+if [ "$RENUXPKG_CHROOT_CMD" = ethereal ]; then
+    : "${RENUXPKG_MASTERDIR:=$RENUXPKG_DISTDIR/masterdir}"
+elif [ -n "$RENUXPKG_ARG_MASTERDIR" ]; then
+    : # Don't mess with masterdir in argv
+else
+    : "${RENUXPKG_MASTERDIR:=$RENUXPKG_DISTDIR/masterdir-$RENUXPKG_MACHINE}"
+    # but use $RENUXPKG_DISTDIR/masterdir if it exists and the new style doesn't
+    if [ ! -d "${RENUXPKG_MASTERDIR}" ] && [ -r "${RENUXPKG_DISTDIR}/masterdir/.rpkg_chroot_init" ] \
+        && [ "$(cat "${RENUXPKG_DISTDIR}/masterdir/.rpkg_chroot_init")" = "$RENUXPKG_MACHINE" ]; then
+        RENUXPKG_MASTERDIR="${RENUXPKG_DISTDIR}/masterdir"
+    fi
+fi
+[ ! -d "$RENUXPKG_MASTERDIR" ] && mkdir -p "$RENUXPKG_MASTERDIR"
+
+# if RENUXPKG_HOSTDIR unset, defaults to $RENUXPKG_DISTDIR/hostdir.
+: ${RENUXPKG_HOSTDIR:=$RENUXPKG_DISTDIR/hostdir}
+[ ! -d $RENUXPKG_HOSTDIR ] && mkdir -p $RENUXPKG_HOSTDIR
+
+if [ -d "$RENUXPKG_MASTERDIR" -a ! -w "$RENUXPKG_MASTERDIR" ]; then
+    echo "ERROR: can't write to masterdir $RENUXPKG_MASTERDIR." 1>&2
+    exit 1
+fi
+
+# Try using chroot-git then git from the host system
+RENUXPKG_GIT_CMD="$(PATH="/usr/libexec/chroot-git:$PATH:$RENUXPKG_MASTERDIR/usr/libexec/chroot-git" command -v git 2>/dev/null)"
+if [ -n "$RENUXPKG_GIT_CMD" ]; then
+    export RENUXPKG_GIT_CMD
+elif [ -z "$RENUXPKG_USE_BUILD_MTIME" ] || [ "$RENUXPKG_USE_GIT_REVS" ]; then
+    echo "neither chroot-git or git are available in your system!" 1>&2
+    exit 1
+else
+    unset RENUXPKG_GIT_CMD
+fi
+
+if [ -n "$RENUXPKG_HOSTDIR" ]; then
+    export RENUXPKG_REPOSITORY=$RENUXPKG_HOSTDIR/binpkgs
+    readonly RENUXPKG_SRCDISTDIR=$RENUXPKG_HOSTDIR/sources
+else
+    export RENUXPKG_REPOSITORY=$RENUXPKG_MASTERDIR/host/binpkgs
+    readonly RENUXPKG_SRCDISTDIR=$RENUXPKG_MASTERDIR/host/sources
+fi
+
+# Set RENUXPKG_REPOSITORY to our current branch.
+if [ -z "$RENUXPKG_ALT_REPOSITORY" ]; then
+    pushd "$PWD" &>/dev/null
+    cd $RENUXPKG_DISTDIR
+    _gitbranch="$($RENUXPKG_GIT_CMD symbolic-ref --short HEAD 2>/dev/null)"
+    if [ "${_gitbranch}" -a "${_gitbranch}" != "master" ]; then
+        export RENUXPKG_ALT_REPOSITORY="${_gitbranch}"
+        export RENUXPKG_REPOSITORY="${RENUXPKG_REPOSITORY}/${_gitbranch}"
+     fi
+     popd &>/dev/null
+else
+    export RENUXPKG_REPOSITORY="${RENUXPKG_REPOSITORY}/${RENUXPKG_ALT_REPOSITORY}"
+fi
+
+readonly RENUXPKG_SRCPKGDIR=$RENUXPKG_DISTDIR/srcpkgs
+readonly RENUXPKG_COMMONDIR=$RENUXPKG_DISTDIR/common
+readonly RENUXPKG_SHUTILSDIR=$RENUXPKG_COMMONDIR/rpkg-src/shutils
+readonly RENUXPKG_TRIGGERSDIR=$RENUXPKG_SRCPKGDIR/rpkg-triggers/files
+readonly RENUXPKG_CROSSPFDIR=$RENUXPKG_COMMONDIR/cross-profiles
+readonly RENUXPKG_BUILDSTYLEDIR=$RENUXPKG_COMMONDIR/build-style
+readonly RENUXPKG_LIBEXECDIR=$RENUXPKG_COMMONDIR/rpkg-src/libexec
+readonly RENUXPKG_BUILDHELPERDIR=$RENUXPKG_COMMONDIR/build-helper
+
+readonly RENUXPKG_TARGET="$1"
+if [ "$2" ]; then
+    RENUXPKG_TARGET_PKG="${2##*/}"
+fi
+
+# A temporary masterdir requires rpkg-uchroot(1) or bwrap(1).
+if [ -z "$IN_CHROOT" -a -n "$RENUXPKG_TEMP_MASTERDIR" ]; then
+    case "$RENUXPKG_CHROOT_CMD" in
+    uchroot|bwrap) ;;
+    *) RENUXPKG_CHROOT_CMD="uchroot" ;;
+    esac
+fi
+
+# Check for CHROOT_READY and set up RENUXPKG_ARCH environment var for renuxpkg.
+chroot_check
+check_native_arch
+
+# test if to use linux32 for 32-bit masterdirs in 64-bit environments
+# x86_64, ppc64 (BE) and aarch64 are capable of this, others are not
+linux32_check() {
+    local hostarch="$1"
+    local tgtarch="$2"
+    case "$hostarch" in
+        x86_64*) if [[ "$tgtarch" == i686* ]]; then return 0; fi ;;
+        ppc64le*) if [[ "$tgtarch" == ppcle* ]]; then return 0; fi ;;
+        ppc64*)
+            case "$tgtarch" in
+                ppc64*) return 1 ;;
+                ppc*) return 0 ;;
+            esac
+            ;;
+        aarch64*) if [[ "$tgtarch" == armv* ]]; then return 0; fi ;;
+    esac
+    return 1
+}
+
+# Reconfigure pkgs for 32bit on 64-bit systems and reexec itself.
+if [ -z "$RENUXPKG_REINIT" -a -s $RENUXPKG_MASTERDIR/.rpkg_chroot_init ]; then
+    export RENUXPKG_ARCH=${RENUXPKG_ARCH:-$(<$RENUXPKG_MASTERDIR/.rpkg_chroot_init)}
+    if linux32_check "$RENUXPKG_MACHINE" "$RENUXPKG_ARCH"; then
+        # reconfigure pkgs via linux32
+        linux32 rpkg-reconfigure -r ${RENUXPKG_MASTERDIR} -a &>/dev/null
+        # reexec itself via linux32
+        export RENUXPKG_REINIT=1
+        exec linux32 $0 ${RENUXPKG_OPTIONS} "$@"
+    fi
+fi
+if [ -n "$RENUXPKG_ARCH" ]; then
+    export RENUXPKG_MACHINE=$RENUXPKG_ARCH
+fi
+# At this point if RENUXPKG_TARGET_MACHINE isn't defined we assume
+# it's a native build.
+if [ -z "$RENUXPKG_TARGET_MACHINE" ]; then
+        export RENUXPKG_TARGET_MACHINE=$RENUXPKG_MACHINE
+fi
+
+if [ "$IN_CHROOT" ]; then
+    readonly RENUXPKG_UHELPER_CMD="rpkg-uhelper"
+    readonly RENUXPKG_INSTALL_CMD="rpkg-install -c /host/repocache-$RENUXPKG_MACHINE"
+    readonly RENUXPKG_QUERY_CMD="rpkg-query -c /host/repocache-$RENUXPKG_MACHINE"
+    readonly RENUXPKG_RECONFIGURE_CMD="rpkg-reconfigure"
+    readonly RENUXPKG_REMOVE_CMD="rpkg-remove"
+    readonly RENUXPKG_CHECKVERS_CMD="rpkg-checkvers"
+    readonly RENUXPKG_DESTDIR=/destdir
+    readonly RENUXPKG_BUILDDIR=/builddir
+else
+    readonly RENUXPKG_UHELPER_CMD="rpkg-uhelper -r $RENUXPKG_MASTERDIR"
+    readonly RENUXPKG_INSTALL_CMD="rpkg-install -c $RENUXPKG_HOSTDIR/repocache-$RENUXPKG_MACHINE -r $RENUXPKG_MASTERDIR -C etc/renuxpkg.d"
+    readonly RENUXPKG_QUERY_CMD="rpkg-query -c $RENUXPKG_HOSTDIR/repocache-$RENUXPKG_MACHINE -r $RENUXPKG_MASTERDIR -C etc/renuxpkg.d"
+    readonly RENUXPKG_RECONFIGURE_CMD="rpkg-reconfigure -r $RENUXPKG_MASTERDIR"
+    readonly RENUXPKG_REMOVE_CMD="rpkg-remove -r $RENUXPKG_MASTERDIR"
+    readonly RENUXPKG_CHECKVERS_CMD="rpkg-checkvers -r $RENUXPKG_MASTERDIR"
+    readonly RENUXPKG_DESTDIR=$RENUXPKG_MASTERDIR/destdir
+    readonly RENUXPKG_BUILDDIR=$RENUXPKG_MASTERDIR/builddir
+fi
+readonly RENUXPKG_RINDEX_CMD="rpkg-rindex"
+readonly RENUXPKG_FETCH_CMD="rpkg-fetch"
+readonly RENUXPKG_DIGEST_CMD="rpkg-digest"
+readonly RENUXPKG_CMPVER_CMD="rpkg-uhelper cmpver"
+
+export RENUXPKG_SHUTILSDIR RENUXPKG_CROSSPFDIR RENUXPKG_TRIGGERSDIR \
+    RENUXPKG_SRCPKGDIR RENUXPKG_COMMONDIR RENUXPKG_BUILDDIR \
+    RENUXPKG_REPOSITORY RENUXPKG_ALT_REPOSITORY RENUXPKG_STRICT RENUXPKG_SRCDISTDIR RENUXPKG_DIGEST_CMD \
+    RENUXPKG_UHELPER_CMD RENUXPKG_INSTALL_CMD RENUXPKG_QUERY_CMD RENUXPKG_BUILD_ONLY_ONE_PKG \
+    RENUXPKG_RINDEX_CMD RENUXPKG_RECONFIGURE_CMD RENUXPKG_REMOVE_CMD RENUXPKG_CHECKVERS_CMD \
+    RENUXPKG_CMPVER_CMD RENUXPKG_FETCH_CMD RENUXPKG_VERSION RENUXPKG_BUILDSTYLEDIR \
+    RENUXPKG_CPPFLAGS RENUXPKG_CFLAGS RENUXPKG_CXXFLAGS RENUXPKG_FFLAGS RENUXPKG_LDFLAGS \
+    RENUXPKG_MAKEJOBS RENUXPKG_BUILD_FORCEMODE RENUXPKG_USE_GIT_REVS RENUXPKG_DEBUG_PKGS \
+    RENUXPKG_CHECK_PKGS RENUXPKG_CCACHE RENUXPKG_DISTCC RENUXPKG_DISTCC_HOSTS RENUXPKG_SKIP_DEPS \
+    RENUXPKG_SKIP_REMOTEREPOS RENUXPKG_CROSS_BUILD RENUXPKG_ARG_PKG_OPTIONS RENUXPKG_CONFIG_FILE \
+    RENUXPKG_KEEP_ALL RENUXPKG_HOSTDIR RENUXPKG_MASTERDIR RENUXPKG_SRC_VERSION \
+    RENUXPKG_DESTDIR RENUXPKG_MACHINE RENUXPKG_TEMP_MASTERDIR RENUXPKG_BINPKG_EXISTS RENUXPKG_BINPKG_EXISTS_LOCAL \
+    RENUXPKG_LIBEXECDIR RENUXPKG_DISTDIR RENUXPKG_DISTFILES_MIRROR RENUXPKG_ALLOW_RESTRICTED \
+    RENUXPKG_USE_GIT_COMMIT_DATE RENUXPKG_PKG_COMPTYPE RENUXPKG_REPO_COMPTYPE \
+    RENUXPKG_BUILDHELPERDIR RENUXPKG_USE_BUILD_MTIME RENUXPKG_BUILD_ENVIRONMENT \
+    RENUXPKG_PRESERVE_PKGS RENUXPKG_IGNORE_BROKENNESS RENUXPKG_DISTFILES_FALLBACK
+
+for i in REPOSITORY DESTDIR BUILDDIR SRCDISTDIR; do
+    eval val="\$RENUXPKG_$i"
+    if [ ! -d "$val" ]; then
+        mkdir -p $val
+    fi
+    unset val
+done
+
+#
+# Sanitize PATH.
+#
+if [ -z "$IN_CHROOT" ]; then
+    # In non chroot case always prefer host tools.
+    export PATH="$PATH:$RENUXPKG_MASTERDIR/usr/bin"
+fi
+
+#
+# Set up ccache
+#
+if [ "$RENUXPKG_CCACHE" ]; then
+    export CCACHEPATH="/usr/lib/ccache/bin"
+    export CCACHE_DIR="$RENUXPKG_HOSTDIR/ccache"
+    # Avoid not using cached files just due to compiler mtime
+    # changes when e.g. bootstrapping
+    export CCACHE_COMPILERCHECK=content CCACHE_COMPRESS=1
+    export PATH="$CCACHEPATH:$PATH"
+    mkdir -p $CCACHE_DIR
+fi
+
+#
+# Set up distcc
+#
+if [ "$RENUXPKG_DISTCC" ]; then
+    if [ "$RENUXPKG_CCACHE" ]; then
+        export CCACHE_PREFIX="/usr/bin/distcc"
+    else
+        DISTCCPATH="/usr/lib/distcc/bin"
+        export PATH="$DISTCCPATH:$PATH"
+    fi
+    export DISTCC_DIR="$RENUXPKG_HOSTDIR/distcc-${RENUXPKG_CROSS_BUILD:-${RENUXPKG_MACHINE}}"
+    export DISTCC_HOSTS="$RENUXPKG_DISTCC_HOSTS"
+    mkdir -p $DISTCC_DIR
+fi
+
+check_build_requirements
+
+#
+# Read funcs from helpers
+#
+for f in ${RENUXPKG_SHUTILSDIR}/*.sh; do
+    [ -r "$f" ] && . $f
+done
+
+if [ -z "$IN_CHROOT" ]; then
+    trap 'exit_func' INT TERM
+    if [ -n "$RENUXPKG_DISTFILES_MIRROR" ]; then
+        setup_distfiles_mirror "$RENUXPKG_DISTFILES_MIRROR"
+    fi
+    if [ -n "$RENUXPKG_DISTFILES_FALLBACK" ]; then
+        setup_distfiles_mirror "$RENUXPKG_DISTFILES_FALLBACK"
+    fi
+fi
+
+reconfigure_base_chroot
+
+#
+# Main switch.
+#
+case "$RENUXPKG_TARGET" in
+    binary-bootstrap)
+        if [ -n "$RENUXPKG_TARGET_PKG" ]; then
+            msg_error "rpkg-src: binary-bootstrap <arch> is no longer supported, use '-A <arch>' instead\n"
+            exit 1
+        fi
+        install_base_chroot "$RENUXPKG_MACHINE"
+        ;;
+    bootstrap)
+        if [ -n "$RENUXPKG_CHECK_PKGS" ]; then
+            msg_error "rpkg-src: disable tests for bootstrap\n"
+            exit 1
+        fi
+        if [ -n "$RENUXPKG_TARGET_PKG" ]; then
+            msg_error "rpkg-src: bootstrap <arch> is no longer supported, use '-A <arch>' instead\n"
+            exit 1
+        fi
+        # base-chroot building on host
+        # check for required host utils
+        check_reqhost_utils bootstrap
+        (
+            export RENUXPKG_ARCH=$RENUXPKG_MACHINE
+            export RENUXPKG_SKIP_REMOTEREPOS=1
+            chroot_sync_repodata
+            $RENUXPKG_LIBEXECDIR/build.sh \
+                base-chroot base-chroot $RENUXPKG_TARGET || exit 1
+        ) || exit 1
+        [ -d $RENUXPKG_MASTERDIR ] && rm -rf $RENUXPKG_MASTERDIR
+        install_base_chroot "$RENUXPKG_MACHINE"
+        ;;
+    bootstrap-update)
+        if [ -n "$CHROOT_READY" -a -z "$IN_CHROOT" ]; then
+            chroot_handler bootstrap-update
+        else
+            setup_env "$RENUXPKG_CROSS_BUILD"
+            chroot_sync_repodata
+            update_base_chroot
+        fi
+        ;;
+    chroot)
+        setup_env "$RENUXPKG_CROSS_BUILD"
+        chroot_sync_repodata
+        chroot_handler chroot dummy
+        ;;
+    clean)
+        if [ -z "$RENUXPKG_TARGET_PKG" ]; then
+            if [ -n "$CHROOT_READY" -a -z "$IN_CHROOT" ]; then
+                chroot_handler remove-autodeps
+            else
+                remove_pkg_autodeps
+            fi
+            msg_normal "rpkg-src: cleaning up masterdir...\n"
+            # Needed to remove Go Modules
+            [ -d "$RENUXPKG_BUILDDIR" ] && chmod -R +wX $RENUXPKG_BUILDDIR
+            rm -rf \
+                $RENUXPKG_BUILDDIR \
+                $RENUXPKG_DESTDIR
+            rm -rf $RENUXPKG_MASTERDIR/tmp
+            mkdir -p $RENUXPKG_MASTERDIR/tmp
+        else
+            read_pkg
+            if [ -n "$CHROOT_READY" -a -z "$IN_CHROOT" ]; then
+                chroot_handler $RENUXPKG_TARGET $RENUXPKG_TARGET_PKG || exit $?
+            else
+                if declare -f do_clean >/dev/null; then
+                    run_func do_clean
+                fi
+                remove_pkg_wrksrc
+                remove_pkg_statedir
+            fi
+            remove_pkg $RENUXPKG_CROSS_BUILD
+        fi
+        ;;
+    clean-repocache)
+        if [ -n "$CHROOT_READY" -a -z "$IN_CHROOT" ]; then
+            chroot_handler $RENUXPKG_TARGET $RENUXPKG_TARGET_PKG || exit $?
+        else
+            if [ "$RENUXPKG_CROSS_BUILD" ]; then
+                setup_env "$RENUXPKG_CROSS_BUILD"
+                $RENUXPKG_REMOVE_XCMD -c "$RENUXPKG_HOSTDIR/repocache-${RENUXPKG_TARGET_MACHINE}" -O
+            else
+                $RENUXPKG_REMOVE_CMD -c "$RENUXPKG_HOSTDIR/repocache-${RENUXPKG_TARGET_MACHINE}" -O
+            fi
+        fi
+        ;;
+    consistency-check)
+        consistency_check
+        ;;
+    remove-autodeps)
+        if [ -n "$CHROOT_READY" -a -z "$IN_CHROOT" ]; then
+            chroot_handler remove-autodeps
+        else
+            remove_pkg_autodeps
+        fi
+        ;;
+    fetch|extract|patch|configure|build|check|install|pkg)
+        if [ "$RENUXPKG_TARGET" = "check" ] && [ -z "$RENUXPKG_CHECK_PKGS" ]; then
+            export RENUXPKG_CHECK_PKGS=full
+        fi
+        read_pkg
+        if [ -n "$CHROOT_READY" -a -z "$IN_CHROOT" ]; then
+            chroot_handler $RENUXPKG_TARGET $RENUXPKG_TARGET_PKG
+        else
+            setup_env "$RENUXPKG_CROSS_BUILD"
+            check_existing_pkg
+            chroot_sync_repodata
+            # prevent update_base_chroot from removing the builddir/destdir
+            update_base_chroot keep-all-force
+            $RENUXPKG_LIBEXECDIR/build.sh $RENUXPKG_TARGET_PKG $RENUXPKG_TARGET_PKG \
+                $RENUXPKG_TARGET $RENUXPKG_CROSS_BUILD || exit $?
+        fi
+        ;;
+    remove|remove-destdir)
+        read_pkg
+        remove_pkg $RENUXPKG_CROSS_BUILD
+        ;;
+    list)
+        $RENUXPKG_QUERY_CMD -l
+        ;;
+    purge-distfiles)
+        purge_distfiles
+        ;;
+    show)
+        read_pkg ignore-problems
+        show_pkg $RENUXPKG_PRINT_VARIABLES
+        ;;
+    show-avail)
+        read_pkg &>/dev/null
+        show_avail
+        ;;
+    show-files)
+        read_pkg ignore-problems
+        show_pkg_files
+        ;;
+    show-deps)
+        read_pkg ignore-problems
+        show_pkg_deps
+        ;;
+    show-build-deps)
+        read_pkg ignore-problems
+        show_pkg_build_deps
+        ;;
+    show-hostmakedepends)
+        read_pkg ignore-problems
+        show_pkg_hostmakedepends
+        ;;
+    show-makedepends)
+        read_pkg ignore-problems
+        show_pkg_makedepends
+        ;;
+    show-checkdepends)
+        read_pkg ignore-problems
+        show_pkg_checkdepends
+        ;;
+    show-pkg-var-dump)
+        read_pkg ignore-problems
+        for sub_name in $subpackages; do
+            if [ $sub_name = $RENUXPKG_TARGET_PKG ]; then
+                . ${RENUXPKG_COMMONDIR}/environment/setup-subpkg/subpkg.sh
+                ${sub_name}_package
+            fi
+        done
+        printf "archs: %s\n\n" "$archs"
+        printf "bootstrap: %s\n\n" "$bootstrap"
+        printf "broken: %s\n\n" "$broken"
+        printf "depends: %s\n\n" "$depends"
+        printf "hostmakedepends: %s\n\n" "$hostmakedepends"
+        printf "makedepends: %s\n\n" "$makedepends"
+        printf "nocross: %s\n\n" "$nocross"
+        printf "pkgname: %s\n\n" "$pkgname"
+        printf "restricted: %s\n\n" "$restricted"
+        printf "revision: %s\n\n" "$revision"
+        printf "subpackages: %s\n\n" "$subpackages"
+        printf "version: %s\n\n" "$version"
+        printf "provides: %s\n\n" "$provides"
+        printf "lib32disabled: %s\n\n" "$lib32disabled"
+        printf "nodebug: %s\n\n" "$nodebug"
+        ;;
+    show-pkg-var)
+        read_pkg ignore-problems
+        for sub_name in $subpackages; do
+            if [ $sub_name = $RENUXPKG_TARGET_PKG ]; then
+                . ${RENUXPKG_COMMONDIR}/environment/setup-subpkg/subpkg.sh
+                ${sub_name}_package
+            fi
+        done
+        while IFS= read -r pkg_var; do
+                print_var=
+                case "${pkg_var}" in
+                    archs) print_var="$archs ";;
+                    bootstrap) print_var="$bootstrap ";;
+                    broken) print_var="$broken ";;
+                    depends) print_var="$depends ";;
+                    hostmakedepends) print_var="$hostmakedepends ";;
+                    makedepends) print_var="$makedepends ";;
+                    nocross) print_var="$nocross ";;
+                    pkgname) print_var="$pkgname ";;
+                    restricted) print_var="$restricted ";;
+                    revision) print_var="$revision ";;
+                    subpackages) print_var="$subpackages ";;
+                    version) print_var="$version ";;
+                    provides) print_var="$provides ";;
+                    lib32disabled) print_var="$lib32disabled ";;
+                    nodebug) print_var="$nodebug ";;
+                esac # the space at the end of each is essential for unset vars
+                if [ -n "$print_var" ]; then
+                        printf "%s\n" "$(printf "${print_var% }" | tr -t '\n\r' ' ')"
+                fi # The trailing space gets stripped before printing anyway
+        done
+        ;;
+    dbulk-dump)
+        read_pkg
+        check_pkg_arch "$RENUXPKG_CROSS_BUILD"
+        for x in pkgname version revision; do
+            printf '%s: %s\n' "$x" "${!x}"
+        done
+        for x in bootstrap; do
+            [[ ${!x} ]] && printf '%s: %s\n' "$x" "${!x}"
+        done
+        for x in hostmakedepends makedepends; do
+            arr=(${!x})
+            if [[ ${#arr} -gt 0 ]]; then
+                printf '%s:\n' "$x"
+                printf ' %s\n' "${arr[@]}"
+            fi
+        done
+        _cleandeps=$(setup_pkg_depends "" 1 1 | { grep -vF "$(printf "%s\n" $pkgname $subpackages)" || :; } | sort -u) || exit 1
+        if [[ $_cleandeps ]]; then
+                printf 'depends:\n'
+                printf ' %s\n' $_cleandeps
+        fi
+        if [[ $subpackages ]]; then
+            printf 'subpackages:\n'
+            printf ' %s\n' $subpackages
+        fi
+        ;;
+    show-options)
+        read_pkg ignore-problems
+        show_pkg_build_options
+        ;;
+    show-shlib-provides)
+        read_pkg ignore-problems
+        show_pkg_shlib_provides
+        ;;
+    show-shlib-requires)
+        read_pkg ignore-problems
+        show_pkg_shlib_requires
+        ;;
+    show-var)
+        for f in "${RENUXPKG_COMMONDIR}"/environment/setup/*.sh; do
+            source "$f"
+        done
+        if [ "$RENUXPKG_CROSS_BUILD" ]; then
+            source "${RENUXPKG_COMMONDIR}/cross-profiles/${RENUXPKG_CROSS_BUILD}.sh"
+        else
+            source "${RENUXPKG_COMMONDIR}/build-profiles/${RENUXPKG_MACHINE}.sh"
+        fi
+        shift 1
+        for f; do
+            echo "${!f}"
+        done
+        ;;
+    show-repo-updates)
+        bulk_build
+        ;;
+    show-sys-updates)
+        bulk_build installed
+        ;;
+    show-local-updates)
+        bulk_build local
+        ;;
+    sort-dependencies)
+        bulk_sortdeps ${@/$RENUXPKG_TARGET/}
+        ;;
+    update-bulk)
+        bulk_update
+        ;;
+    update-sys)
+        bulk_update installed
+        ;;
+    update-local)
+        bulk_update local
+        ;;
+    update-check)
+        read_pkg ignore-problems
+        update_check
+        ;;
+    update-hash-cache)
+        update_hash_cache
+        ;;
+    zap)
+        masterdir_zap
+        ;;
+    *)
+        msg_red "rpkg-src: invalid target $RENUXPKG_TARGET.\n"
+        usage && exit 1
+        ;;
+esac
+
+exit_and_cleanup $?

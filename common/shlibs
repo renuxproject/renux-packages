@@ -1,0 +1,9 @@
+# --*-- shell --*--
+#
+# This file represents a map between shared libraries and packages
+# in RENUXPKG. Every shared library installed by a package must be
+# listed here and mapped to a binary package.
+#
+# Renux packages are built from the FreeBSD base system libraries, so
+# this database starts empty and is filled in as packages are added.
+#
