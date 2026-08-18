@@ -3,6 +3,12 @@
 *~
 \#*#
 
+# build artifacts
+/hostdir
+/zig-cache
+/zig-out
+/sysroot
+
 # exclude everything in root except files and directories from renux-packages
 /*
 !/.editorconfig

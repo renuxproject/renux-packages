@@ -3,7 +3,7 @@ pkgname=nano
 version=9.2
 revision=1
 build_style=gnu-configure
-configure_args="--disable-nls --disable-libmagic --disable-utf8 --without-slang"
+configure_args="--disable-nls --disable-libmagic"
 short_desc="GNU nano text editor"
 maintainer="Renan2010 <renanluscad@proton.me>"
 license="GPL-3.0-or-later"
@@ -11,6 +11,5 @@ homepage="https://www.nano-editor.org"
 distfiles="https://ftp.gnu.org/gnu/nano/nano-${version}.tar.xz"
 checksum=05ecb99247b782e8a5b3a25ed4101dd034b0236902f7449bc9795b717642f7e9
 
-# ncurses comes from the Renux base system (FreeBSD)
-hostmakedepends="ncurses"
-depends="ncurses"
+# Runtime libraries (libncursesw, libtinfow, libm, libc) come from the
+# Renux base system (FreeBSD 15.1), so this package has no dependencies.

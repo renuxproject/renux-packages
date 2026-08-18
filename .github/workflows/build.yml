@@ -1,0 +1,95 @@
+name: build packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'srcpkgs/**'
+      - 'common/scripts/**'
+      - 'etc/renuxpkg.d/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RENUXPKG_ARCH: amd64
+      ZIG_VERSION: 0.16.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zig
+        run: |
+          curl -fL -o /tmp/zig.tar.xz \
+            https://ziglang.org/download/${{ env.ZIG_VERSION }}/zig-linux-x86_64-${{ env.ZIG_VERSION }}.tar.xz
+          mkdir -p /opt/zig
+          tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          echo /opt/zig >> "$GITHUB_PATH"
+
+      - name: Cache FreeBSD sysroot
+        uses: actions/cache@v4
+        with:
+          path: sysroot
+          key: freebsd-15.1-sysroot
+
+      - name: Fetch FreeBSD sysroot
+        run: |
+          if [ ! -d sysroot/usr/include ]; then
+            curl -fL -o /tmp/base.txz \
+              https://download.freebsd.org/releases/amd64/15.1-RELEASE/base.txz
+            mkdir -p sysroot
+            tar -xJf /tmp/base.txz -C sysroot ./usr ./lib ./libexec
+          fi
+
+      - name: Build rpkg tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y libssl-dev
+          git clone --depth 1 https://github.com/renuxproject/rpkg.git /tmp/rpkg
+          cd /tmp/rpkg && zig build
+          echo /tmp/rpkg/zig-out/bin >> "$GITHUB_PATH"
+
+      - name: Build packages
+        run: |
+          mkdir -p repo/current
+          for t in srcpkgs/*/template; do
+            pkg="${t%/template}"
+            pkg="${pkg##*/}"
+            RENUX_SYSROOT="$PWD/sysroot" ./common/scripts/build-renux-pkg.sh \
+              "$pkg" "$PWD/repo/current"
+          done
+          rpkg-rindex -a "$PWD"/repo/current/*.rpkg
+
+      - name: Sign repository
+        run: |
+          if [ -z "${{ secrets.RENUXPKG_PRIVKEY }}" ]; then
+            echo "::warning::RENUXPKG_PRIVKEY secret not set; repository will be unsigned"
+            exit 0
+          fi
+          echo "${{ secrets.RENUXPKG_PRIVKEY }}" > /tmp/renux-key.pem
+          rpkg-rindex --privkey /tmp/renux-key.pem \
+            --signedby "Renan2010 <renanluscad@proton.me>" -s "$PWD/repo/current"
+          rpkg-rindex --privkey /tmp/renux-key.pem \
+            -S "$PWD"/repo/current/*.rpkg
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - name: Publish packages
+        run: |
+          rm -rf site/current
+          mkdir -p site/current
+          cp repo/current/* site/current/
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -q -m "build: update binary packages"
+            git push origin gh-pages
+          else
+            echo "no changes to publish"
+          fi
